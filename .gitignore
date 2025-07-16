@@ -4,6 +4,10 @@
 # Ignore pickle files
 *.pickle
 
+#ignore credentials
+credentials.json
+
+
 # Ignore Python virtual environment folder
 .venv/
 venv/

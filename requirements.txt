@@ -1,4 +1,8 @@
 requests
+tqdm
+fastapi
+uvicorn
+
 pandas
 google-auth
 google-auth-oauthlib
