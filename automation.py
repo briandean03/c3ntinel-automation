@@ -173,10 +173,15 @@ def main(start_date, end_date):
 
     if all_readings:
         df = pd.json_normalize(all_readings)
-        filename = "latest_ceentiel_report.csv"
+
+        # Save CSV inside 'public' folder
+        output_dir = "public"
+        os.makedirs(output_dir, exist_ok=True)
+        filename = os.path.join(output_dir, "latest_ceentiel_report.csv")
         df.to_csv(filename, index=False)
         print(f"✅ Saved {len(df)} rows to {filename}")
-        upload_to_drive(filename, drive_filename=filename)
+
+        upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv")
     else:
         print("⚠️ No data to save")
 
