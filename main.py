@@ -1,20 +1,16 @@
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import os
-from automation import main
 
 app = FastAPI()
 
-# Run the automation on startup (will generate the CSV into 'public/')
-@app.on_event("startup")
-def run_automation():
-    # These can be parameterized or hardcoded for now
-    start_date = "2024-06-01T00:00:00.000Z"
-    end_date = "2025-06-01T00:00:00.000Z"
-    main(start_date, end_date)
+@app.get("/")
+def home():
+    return {"message": "Ceentiel automation is running!"}
 
-# Serve the public/ directory
-if not os.path.exists("public"):
-    os.makedirs("public")
-
-app.mount("/", StaticFiles(directory="public", html=True), name="static")
+@app.get("/latest_ceentiel_report.csv")
+def get_csv():
+    csv_path = os.path.join("public", "latest_ceentiel_report.csv")
+    if os.path.exists(csv_path):
+        return FileResponse(csv_path, media_type='text/csv', filename="latest_ceentiel_report.csv")
+    return {"error": "CSV file not found"}
