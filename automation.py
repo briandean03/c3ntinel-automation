@@ -1,19 +1,16 @@
 import requests
 import pandas as pd
 from datetime import datetime
-import argparse
 import time
 import os
-import pickle
 from tqdm import tqdm
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
-# Ceentiel credentials
-CLIENT_ID = "e394927c-1f79-4734-9e4a-a654eca6aa68"
-CLIENT_SECRET = "FS0O3Chf&fd+i5g2"
+# C3ntinel credentials (use environment variables)
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BASE_API = "https://api.c3ntinel.com/2"
 
 def get_token():
@@ -24,17 +21,25 @@ def get_token():
         "client_secret": CLIENT_SECRET
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    r = requests.post(url, data=payload, headers=headers)
-    r.raise_for_status()
-    return r.json()["access_token"]
+    try:
+        r = requests.post(url, data=payload, headers=headers)
+        r.raise_for_status()
+        return r.json()["access_token"]
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get token: {e}")
+        raise
 
 def get_meters(token, query="is:cumulative"):
     url = f"{BASE_API}/meter/search"
     headers = {"Authorization": f"Bearer {token}"}
     params = {"query": query}
-    r = requests.get(url, headers=headers, params=params)
-    r.raise_for_status()
-    return r.json()["_embedded"]["meters"]
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        return r.json()["_embedded"]["meters"]
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get meters: {e}")
+        raise
 
 def get_meter_readings(token, meter_id, start_date=None, end_date=None):
     url = f"{BASE_API}/meter/{meter_id}/readings"
@@ -44,20 +49,35 @@ def get_meter_readings(token, meter_id, start_date=None, end_date=None):
         params["start_date"] = start_date
     if end_date:
         params["end_date"] = end_date
-    r = requests.get(url, headers=headers, params=params)
-    return r.json() if r.status_code == 200 else {}
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}")
+        return {}
 
 def get_meter_properties(token, meter_id):
     url = f"{BASE_API}/meter/{meter_id}/properties/current"
     headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(url, headers=headers)
-    return r.json() if r.status_code == 200 else {}
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get properties for meter {meter_id}: {e}")
+        return {}
 
 def get_site_info(token, site_id):
     url = f"{BASE_API}/site/{site_id}"
     headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(url, headers=headers)
-    return r.json() if r.status_code == 200 else {}
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get site info for site {site_id}: {e}")
+        return {}
 
 def get_temperature_data(token, import_code, start_date, end_date):
     url = f"{BASE_API}/rawdata"
@@ -67,52 +87,46 @@ def get_temperature_data(token, import_code, start_date, end_date):
         "start_date": start_date,
         "end_date": end_date
     }
-    r = requests.get(url, headers=headers, params=params)
-    if r.status_code != 200:
-        print(f"⚠️ Could not get raw temperature data for import code {import_code}, status {r.status_code}")
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        data = r.json()
+        temps_by_date = {}
+        for reading in data.get("readings", []):
+            ts = reading.get("time")
+            if ts is None:
+                continue
+            dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+            temps_by_date[dt] = reading.get("value")
+        return temps_by_date
+    except requests.RequestException as e:
+        print(f"⚠️ Could not get temperature data for import code {import_code}, status {r.status_code}: {e}")
+        print(f"Request URL: {url}")
+        print(f"Request Params: {params}")
         return {}
-    data = r.json()
-    temps_by_date = {}
-    for reading in data.get("readings", []):
-        ts = reading.get("time")
-        if ts is None:
-            continue
-        dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
-        temps_by_date[dt] = reading.get("value")
-    return temps_by_date
 
 def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folder_id="1pZBBKGMxyk5-QEH3ef4QwkuXFx8H3vF6"):
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    creds = None
-
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
-
+    creds = service_account.Credentials.from_service_account_file('public/service_account.json', scopes=SCOPES)
     service = build('drive', 'v3', credentials=creds)
     query = f"name = '{drive_filename}' and '{folder_id}' in parents and trashed = false"
-    response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-    files = response.get('files', [])
-    media = MediaFileUpload(filename, mimetype='text/csv')
-
-    if files:
-        file_id = files[0]['id']
-        updated_file = service.files().update(fileId=file_id, media_body=media).execute()
-        print(f"📤 Updated existing file in Google Drive folder: {drive_filename}")
-        print(f"🔗 View File: https://drive.google.com/file/d/{file_id}/view")
-    else:
-        file_metadata = {'name': drive_filename, 'parents': [folder_id]}
-        new_file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        print(f"📤 Uploaded new file to Google Drive folder: {drive_filename}")
-        print(f"🔗 View File: {new_file.get('webViewLink')}")
+    try:
+        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        files = response.get('files', [])
+        media = MediaFileUpload(filename, mimetype='text/csv')
+        if files:
+            file_id = files[0]['id']
+            updated_file = service.files().update(fileId=file_id, media_body=media).execute()
+            print(f"📤 Updated existing file: {drive_filename}")
+            print(f"🔗 View File: https://drive.google.com/file/d/{file_id}/view")
+        else:
+            file_metadata = {'name': drive_filename, 'parents': [folder_id]}
+            new_file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+            print(f"📤 Uploaded new file: {drive_filename}")
+            print(f"🔗 View File: {new_file.get('webViewLink')}")
+    except Exception as e:
+        print(f"⚠️ Failed to upload to Google Drive: {e}")
+        raise
 
 def main(start_date, end_date):
     token = get_token()
@@ -127,11 +141,13 @@ def main(start_date, end_date):
         meter_id = meter.get("meterId")
         site_id = meter.get("siteId")
         meter_name = meter.get("name")
+        print(f"Processing meter {meter_id} ({meter_name})")  # Log meter ID
 
         meter_props = get_meter_properties(token, meter_id)
-        site_info = get_site_info(token, site_id)
-
         import_code = meter_props.get("importCode") if meter_props else None
+        print(f"Import code for meter {meter_id}: {import_code}")  # Log import code
+
+        site_info = get_site_info(token, site_id)
         temperature_map = get_temperature_data(token, import_code, start_date, end_date) if import_code else {}
 
         readings_resp = get_meter_readings(token, meter_id, start_date, end_date)
@@ -173,22 +189,21 @@ def main(start_date, end_date):
 
     if all_readings:
         df = pd.json_normalize(all_readings)
-
-        # Save CSV inside 'public' folder
         output_dir = "public"
         os.makedirs(output_dir, exist_ok=True)
         filename = os.path.join(output_dir, "latest_ceentiel_report.csv")
         df.to_csv(filename, index=False)
         print(f"✅ Saved {len(df)} rows to {filename}")
-
-        upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv")
+        upload_to_drive(filename)
     else:
         print("⚠️ No data to save")
 
-
-# ✅ Add this function so FastAPI can import it:
 def run():
     today = datetime.utcnow().date()
     start_date = str(today)
     end_date = str(today)
+    print(f"Running report for {start_date} to {end_date}")
     main(start_date, end_date)
+
+if __name__ == "__main__":
+    run()
