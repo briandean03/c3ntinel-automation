@@ -185,3 +185,10 @@ def main(start_date, end_date):
     else:
         print("⚠️ No data to save")
 
+
+# ✅ Add this function so FastAPI can import it:
+def run():
+    today = datetime.utcnow().date()
+    start_date = str(today)
+    end_date = str(today)
+    main(start_date, end_date)
