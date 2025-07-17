@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import time
 import os
+import json
 from tqdm import tqdm
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -107,7 +108,7 @@ def get_temperature_data(token, import_code, start_date, end_date):
 
 def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folder_id="1pZBBKGMxyk5-QEH3ef4QwkuXFx8H3vF6"):
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    creds = service_account.Credentials.from_service_account_file('public/service_account.json', scopes=SCOPES)
+    creds = service_account.Credentials.from_service_account_info(json.loads(os.getenv("GOOGLE_CREDENTIALS")), scopes=SCOPES)
     service = build('drive', 'v3', credentials=creds)
     query = f"name = '{drive_filename}' and '{folder_id}' in parents and trashed = false"
     try:
@@ -136,19 +137,20 @@ def main(start_date, end_date):
     print(f"✅ Found {len(meters)} meters")
 
     all_readings = []
+    problem_codes = {"RAKEMS_FLAYASH_LVRMGND_MDB1ENRG", "RAKEMS_FLAYASH_LVRMGND_MDB1ENRG_EX"}
 
     for meter in tqdm(meters, desc="Fetching meter data"):
         meter_id = meter.get("meterId")
         site_id = meter.get("siteId")
         meter_name = meter.get("name")
-        print(f"Processing meter {meter_id} ({meter_name})")  # Log meter ID
+        print(f"Processing meter {meter_id} ({meter_name})")
 
         meter_props = get_meter_properties(token, meter_id)
         import_code = meter_props.get("importCode") if meter_props else None
-        print(f"Import code for meter {meter_id}: {import_code}")  # Log import code
+        print(f"Import code for meter {meter_id}: {import_code}")
 
         site_info = get_site_info(token, site_id)
-        temperature_map = get_temperature_data(token, import_code, start_date, end_date) if import_code else {}
+        temperature_map = {} if import_code in problem_codes else get_temperature_data(token, import_code, start_date, end_date) if import_code else {}
 
         readings_resp = get_meter_readings(token, meter_id, start_date, end_date)
         if "readings" in readings_resp:
@@ -196,7 +198,7 @@ def main(start_date, end_date):
         print(f"✅ Saved {len(df)} rows to {filename}")
         upload_to_drive(filename)
     else:
-        print("⚠️ No data to save")
+        print("⚠️ No valid readings collected, CSV not generated")
 
 def run():
     today = datetime.utcnow().date()

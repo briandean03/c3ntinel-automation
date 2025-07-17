@@ -1,12 +1,12 @@
 import requests
 import pandas as pd
 from datetime import datetime
-import argparse
 import time
+import os
 
-# Ceentiel credentials
-CLIENT_ID = "d79addba-7240-43ba-ac91-df8c020d7c9b"
-CLIENT_SECRET = "Js!$&j!lk2mK01$Z"
+# Ceentiel credentials (use environment variables)
+CLIENT_ID = os.getenv("FAULTY_CLIENT_ID")
+CLIENT_SECRET = os.getenv("FAULTY_CLIENT_SECRET")
 BASE_API = "https://api.c3ntinel.com/2"
 
 DELTA_THRESHOLD = 1000000  # Flag if change between consecutive readings exceeds this
@@ -19,32 +19,48 @@ def get_token():
         "client_secret": CLIENT_SECRET
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    r = requests.post(url, data=payload, headers=headers)
-    r.raise_for_status()
-    return r.json()["access_token"]
+    try:
+        r = requests.post(url, data=payload, headers=headers)
+        r.raise_for_status()
+        return r.json()["access_token"]
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get token: {e}")
+        raise
 
 def get_meters(token):
     url = f"{BASE_API}/meter/search"
     headers = {"Authorization": f"Bearer {token}"}
-    params = {"query": "PWR or ENG"}  # limit to PWR or ENG
-    r = requests.get(url, headers=headers, params=params)
-    r.raise_for_status()
-    return r.json()["_embedded"]["meters"]
+    params = {"query": "PWR or ENG"}
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        return r.json()["_embedded"]["meters"]
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get meters: {e}")
+        raise
 
 def get_meter_readings(token, meter_id, start_date, end_date):
     url = f"{BASE_API}/meter/{meter_id}/readings"
     headers = {"Authorization": f"Bearer {token}"}
     params = {"start_date": start_date, "end_date": end_date}
-    r = requests.get(url, headers=headers, params=params)
-    if r.status_code == 200:
-        return r.json().get("readings", [])
-    return []
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        if r.status_code == 200:
+            return r.json().get("readings", [])
+        return []
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}")
+        return []
 
 def get_site_info(token, site_id):
     url = f"{BASE_API}/site/{site_id}"
     headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(url, headers=headers)
-    return r.json() if r.status_code == 200 else {}
+    try:
+        r = requests.get(url, headers=headers)
+        return r.json() if r.status_code == 200 else {}
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to get site info for site {site_id}: {e}")
+        return {}
 
 def main(start_date, end_date):
     token = get_token()
@@ -105,17 +121,29 @@ def main(start_date, end_date):
         print(f"[{i}/{len(meters)}] ✅ Checked {meter_name}")
         time.sleep(0.3)
 
+    output_dir = "public"
+    os.makedirs(output_dir, exist_ok=True)
+    filename = os.path.join(output_dir, "faulty_meter_deltas.csv")
     if faulty_meters:
         df = pd.DataFrame(faulty_meters)
-        df.to_csv("faulty_meter_deltas.csv", index=False)
-        print("\n🚨 Faulty meters with abnormal jumps found! Saved to 'faulty_meter_deltas.csv'")
+        df.to_csv(filename, index=False)
+        print(f"\n🚨 Faulty meters with abnormal jumps found! Saved to '{filename}'")
     else:
         print("\n✅ No spikes detected.")
+        # Create empty CSV to indicate no faults
+        pd.DataFrame().to_csv(filename, index=False)
+
+def run():
+    today = datetime.utcnow().date()
+    start_date = str(today)
+    end_date = str(today)
+    print(f"Running faulty meters report for {start_date} to {end_date}")
+    main(start_date, end_date)
 
 if __name__ == "__main__":
+    import argparse
     parser = argparse.ArgumentParser(description="Detect abnormal delta jumps in Ceentiel meters")
     parser.add_argument("--start", required=False, default="2024-06-01T00:00:00.000Z", help="Start date (ISO)")
     parser.add_argument("--end", required=False, default="2024-07-08T00:00:00.000Z", help="End date (ISO)")
     args = parser.parse_args()
-
     main(args.start, args.end)
