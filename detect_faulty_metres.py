@@ -3,13 +3,14 @@ import pandas as pd
 from datetime import datetime
 import time
 import os
+from automation import upload_to_drive
 
-# Ceentiel credentials (use environment variables)
+# Ceentiel credentials
 CLIENT_ID = os.getenv("FAULTY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("FAULTY_CLIENT_SECRET")
 BASE_API = "https://api.c3ntinel.com/2"
 
-DELTA_THRESHOLD = 1000000  # Flag if change between consecutive readings exceeds this
+DELTA_THRESHOLD = 1000000
 
 def get_token():
     url = "https://auth.c3ntinel.com/sso/oauth/token"
@@ -49,7 +50,7 @@ def get_meter_readings(token, meter_id, start_date, end_date):
             return r.json().get("readings", [])
         return []
     except requests.RequestException as e:
-        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}")
+        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}, status: {r.status_code}")
         return []
 
 def get_site_info(token, site_id):
@@ -62,9 +63,11 @@ def get_site_info(token, site_id):
         print(f"⚠️ Failed to get site info for site {site_id}: {e}")
         return {}
 
-def main(start_date, end_date):
+def main(start_date="2025-06-01", end_date="2025-07-01"):
     token = get_token()
     print("✅ Authenticated with Ceentiel")
+
+    print(f"Fetching data for {start_date} to {end_date}")
 
     meters = get_meters(token)
     print(f"🔍 Scanning {len(meters)} meters...")
@@ -84,6 +87,10 @@ def main(start_date, end_date):
         site_name = site_info.get("name", "Unknown")
 
         readings = get_meter_readings(token, meter_id, start_date, end_date)
+        if not readings:
+            print(f"[{i}/{len(meters)}] ⚠️ No readings for {meter_name}, skipping")
+            continue
+
         previous_value = None
         previous_time = None
 
@@ -128,22 +135,20 @@ def main(start_date, end_date):
         df = pd.DataFrame(faulty_meters)
         df.to_csv(filename, index=False)
         print(f"\n🚨 Faulty meters with abnormal jumps found! Saved to '{filename}'")
+        upload_to_drive(filename, drive_filename="faulty_meter_deltas.csv", folder_id="1pZBBKGMxyk5-QEH3ef4QwkuXFx8H3vF6")
     else:
         print("\n✅ No spikes detected.")
-        # Create empty CSV to indicate no faults
         pd.DataFrame().to_csv(filename, index=False)
+        upload_to_drive(filename, drive_filename="faulty_meter_deltas.csv", folder_id="1pZBBKGMxyk5-QEH3ef4QwkuXFx8H3vF6")
 
 def run():
-    today = datetime.utcnow().date()
-    start_date = str(today)
-    end_date = str(today)
-    print(f"Running faulty meters report for {start_date} to {end_date}")
-    main(start_date, end_date)
+    print("Running faulty meters report for 2025-06-01 to 2025-07-01")
+    main()
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Detect abnormal delta jumps in Ceentiel meters")
-    parser.add_argument("--start", required=False, default="2024-06-01T00:00:00.000Z", help="Start date (ISO)")
-    parser.add_argument("--end", required=False, default="2024-07-08T00:00:00.000Z", help="End date (ISO)")
+    parser.add_argument("--start", required=False, default="2025-06-01T00:00:00.000Z", help="Start date (ISO)")
+    parser.add_argument("--end", required=False, default="2025-07-01T00:00:00.000Z", help="End date (ISO)")
     args = parser.parse_args()
     main(args.start, args.end)

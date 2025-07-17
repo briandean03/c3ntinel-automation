@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 
-# C3ntinel credentials (use environment variables)
+# C3ntinel credentials
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 BASE_API = "https://api.c3ntinel.com/2"
@@ -55,7 +55,9 @@ def get_meter_readings(token, meter_id, start_date=None, end_date=None):
         r.raise_for_status()
         return r.json()
     except requests.RequestException as e:
-        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}")
+        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}, status: {r.status_code}")
+        print(f"Request URL: {url}")
+        print(f"Request Params: {params}")
         return {}
 
 def get_meter_properties(token, meter_id):
@@ -129,15 +131,21 @@ def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folde
         print(f"⚠️ Failed to upload to Google Drive: {e}")
         raise
 
-def main(start_date, end_date):
+def main(start_date="2025-06-01", end_date="2025-07-01"):
     token = get_token()
     print("✅ Authenticated")
 
     meters = get_meters(token)
     print(f"✅ Found {len(meters)} meters")
 
+    print(f"Fetching data for {start_date} to {end_date}")
+
     all_readings = []
-    problem_codes = {"RAKEMS_FLAYASH_LVRMGND_MDB1ENRG", "RAKEMS_FLAYASH_LVRMGND_MDB1ENRG_EX"}
+    problem_codes = {
+        "RAKEMS_FLAYASH_LVRMGND_MDB1ENRG",
+        "RAKEMS_FLAYASH_LVRMGND_MDB1ENRG_EX",
+        "RAKEMS_FLAYASH_LVRMGND_DBAC1ENRG"
+    }
 
     for meter in tqdm(meters, desc="Fetching meter data"):
         meter_id = meter.get("meterId")
@@ -153,39 +161,45 @@ def main(start_date, end_date):
         temperature_map = {} if import_code in problem_codes else get_temperature_data(token, import_code, start_date, end_date) if import_code else {}
 
         readings_resp = get_meter_readings(token, meter_id, start_date, end_date)
-        if "readings" in readings_resp:
-            readings = readings_resp["readings"]
-            valid_readings = [r for r in readings if r.get("value") is not None]
+        if not readings_resp or "readings" not in readings_resp:
+            print(f"⚠️ Skipping meter {meter_id} due to empty or failed readings")
+            continue
 
-            for r in valid_readings:
-                raw_date = r.get("date")
-                raw_time = r.get("time") or r.get("timestamp")
-                dt_obj = None
-                try:
-                    if raw_date:
-                        dt_obj = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-                    elif isinstance(raw_time, (int, float)):
-                        dt_obj = datetime.utcfromtimestamp(raw_time / 1000)
-                except Exception as e:
-                    print(f"⚠️ Timestamp parse error for meter {meter_name}: {e}")
-                r["date"] = dt_obj.strftime("%Y-%m-%d %H:%M:%S") if dt_obj else None
-                r.pop("time", None)
-                r.pop("timestamp", None)
+        readings = readings_resp["readings"]
+        valid_readings = [r for r in readings if r.get("value") is not None]
+        if not valid_readings:
+            print(f"⚠️ No valid readings for meter {meter_id}, skipping")
+            continue
 
-                reading_day = r["date"][:10] if r["date"] else None
-                temp = temperature_map.get(reading_day)
-                mdt = temp
-                cdd = max(0, temp - 18) if temp is not None else None
+        for r in valid_readings:
+            raw_date = r.get("date")
+            raw_time = r.get("time") or r.get("timestamp")
+            dt_obj = None
+            try:
+                if raw_date:
+                    dt_obj = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                elif isinstance(raw_time, (int, float)):
+                    dt_obj = datetime.utcfromtimestamp(raw_time / 1000)
+            except Exception as e:
+                print(f"⚠️ Timestamp parse error for meter {meter_name}: {e}")
+            r["date"] = dt_obj.strftime("%Y-%m-%d %H:%M:%S") if dt_obj else None
+            r.pop("time", None)
+            r.pop("timestamp", None)
 
-                r["meter_id"] = meter_id
-                r["meter_name"] = meter_name
-                r["site_id"] = site_id
-                r["meter_properties"] = meter_props
-                r["site_info"] = site_info
-                r["mdt"] = mdt
-                r["cdd"] = cdd
+            reading_day = r["date"][:10] if r["date"] else None
+            temp = temperature_map.get(reading_day)
+            mdt = temp
+            cdd = max(0, temp - 18) if temp is not None else None
 
-                all_readings.append(r)
+            r["meter_id"] = meter_id
+            r["meter_name"] = meter_name
+            r["site_id"] = site_id
+            r["meter_properties"] = meter_props
+            r["site_info"] = site_info
+            r["mdt"] = mdt
+            r["cdd"] = cdd
+
+            all_readings.append(r)
 
         time.sleep(0.5)
 
@@ -199,13 +213,15 @@ def main(start_date, end_date):
         upload_to_drive(filename)
     else:
         print("⚠️ No valid readings collected, CSV not generated")
+        output_dir = "public"
+        os.makedirs(output_dir, exist_ok=True)
+        filename = os.path.join(output_dir, "latest_ceentiel_report.csv")
+        pd.DataFrame().to_csv(filename, index=False)
+        upload_to_drive(filename)
 
 def run():
-    today = datetime.utcnow().date()
-    start_date = str(today)
-    end_date = str(today)
-    print(f"Running report for {start_date} to {end_date}")
-    main(start_date, end_date)
+    print("Running report for 2025-06-01 to 2025-07-01")
+    main()
 
 if __name__ == "__main__":
     run()
