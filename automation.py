@@ -185,10 +185,3 @@ def main(start_date, end_date):
     else:
         print("⚠️ No data to save")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ceentiel Meter Reading Automation with MDT/CDD")
-    parser.add_argument("--start", required=False, default="2024-06-01T00:00:00.000Z", help="Start date in ISO format")
-    parser.add_argument("--end", required=False, default="2025-06-01T00:00:00.000Z", help="End date in ISO format")
-    args = parser.parse_args()
-
-    main(args.start, args.end)

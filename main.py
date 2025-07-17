@@ -1,10 +1,19 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 import os
+import threading
+
+# Import your automation code
+from automation import run  # assuming automation.py is in the same folder
 
 app = FastAPI()
 
 CSV_PATH = "public/latest_ceentiel_report.csv"
+
+@app.on_event("startup")
+def start_background_task():
+    thread = threading.Thread(target=run)
+    thread.start()
 
 @app.get("/")
 def root():
