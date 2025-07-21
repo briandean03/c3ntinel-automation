@@ -6,7 +6,6 @@
 
 #ignore credentials
 credentials.json
-public/service_account.json
 
 # Ignore Python virtual environment folder
 .venv/
