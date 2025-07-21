@@ -7,7 +7,7 @@ import json
 from tqdm import tqdm
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 
 # C3ntinel credentials
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -51,10 +51,10 @@ def get_meter_readings(token, meter_id, start_date, end_date):
         r.raise_for_status()
         return r.json()
     except requests.RequestException as e:
-        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}, status: {r.status_code}")
+        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}, status: {getattr(e.response, 'status_code', 'unknown')}")
         print(f"Request URL: {url}")
         print(f"Request Params: {params}")
-        if "unauthorized" in str(e).lower():
+        if r.status_code == 401:
             print(f"⚠️ Authentication error for meter {meter_id}, skipping")
         return {}
 
@@ -101,19 +101,26 @@ def get_temperature_data(token, import_code, start_date, end_date):
             temps_by_date[dt] = reading.get("value")
         return temps_by_date
     except requests.RequestException as e:
-        print(f"⚠️ Could not get temperature data for import code {import_code}, status {r.status_code}: {e}")
+        print(f"⚠️ Could not get temperature data for import code {import_code}, status {getattr(e.response, 'status_code', 'unknown')}: {e}")
         print(f"Request URL: {url}")
         print(f"Request Params: {params}")
-        if "unauthorized" in str(e).lower():
+        if r.status_code == 401:
             print(f"⚠️ Authentication error for import code {import_code}, skipping")
         return {}
 
 def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folder_id="1pZBBKGMxyk5-QEH3ef4QwkuXFx8H3vF6"):
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    creds = service_account.Credentials.from_service_account_info(json.loads(os.getenv("GOOGLE_CREDENTIALS")), scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
-    query = f"name = '{drive_filename}' and '{folder_id}' in parents and trashed = false"
     try:
+        creds = Credentials(
+            None,
+            refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=SCOPES
+        )
+        service = build('drive', 'v3', credentials=creds)
+        query = f"name = '{drive_filename}' and '{folder_id}' in parents and trashed = false"
         response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         files = response.get('files', [])
         media = MediaFileUpload(filename, mimetype='text/csv')
@@ -133,6 +140,7 @@ def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folde
 
 def main(start_date="2025-06-01", end_date="2025-07-01"):
     token = None
+    skipped_meters = []
     try:
         token = get_token()
         print("✅ Authenticated")
@@ -169,12 +177,14 @@ def main(start_date="2025-06-01", end_date="2025-07-01"):
         readings_resp = get_meter_readings(token, meter_id, start_date, end_date)
         if not readings_resp or "readings" not in readings_resp:
             print(f"⚠️ Skipping meter {meter_id} due to empty or failed readings")
+            skipped_meters.append(meter_id)
             continue
 
         readings = readings_resp["readings"]
         valid_readings = [r for r in readings if r.get("value") is not None]
         if not valid_readings:
             print(f"⚠️ No valid readings for meter {meter_id}, skipping")
+            skipped_meters.append(meter_id)
             continue
 
         for r in valid_readings:
@@ -222,10 +232,14 @@ def main(start_date="2025-06-01", end_date="2025-07-01"):
         pd.DataFrame().to_csv(filename, index=False)
         upload_to_drive(filename)
 
+    if skipped_meters:
+        print(f"⚠️ Skipped meters due to errors: {skipped_meters}")
+
     # Fallback to May 1-June 1, 2025 if no data
     if not all_readings:
         print("⚠️ Retrying with fallback date range: 2025-05-01 to 2025-06-01")
         all_readings = []
+        skipped_meters = []
         fallback_start = "2025-05-01"
         fallback_end = "2025-06-01"
         for meter in tqdm(meters, desc="Fetching meter data (fallback)"):
@@ -244,12 +258,14 @@ def main(start_date="2025-06-01", end_date="2025-07-01"):
             readings_resp = get_meter_readings(token, meter_id, fallback_start, fallback_end)
             if not readings_resp or "readings" not in readings_resp:
                 print(f"⚠️ Skipping meter {meter_id} due to empty or failed readings")
+                skipped_meters.append(meter_id)
                 continue
 
             readings = readings_resp["readings"]
             valid_readings = [r for r in readings if r.get("value") is not None]
             if not valid_readings:
                 print(f"⚠️ No valid readings for meter {meter_id}, skipping")
+                skipped_meters.append(meter_id)
                 continue
 
             for r in valid_readings:
@@ -293,6 +309,9 @@ def main(start_date="2025-06-01", end_date="2025-07-01"):
             print("⚠️ No valid readings in fallback range, empty CSV generated")
             pd.DataFrame().to_csv(filename, index=False)
             upload_to_drive(filename)
+
+        if skipped_meters:
+            print(f"⚠️ Skipped meters in fallback range: {skipped_meters}")
 
 def run():
     print("Running report for 2025-06-01 to 2025-07-01")
