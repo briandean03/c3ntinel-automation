@@ -1,10 +1,15 @@
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 import os
 from automation import run as run_report
 from detect_faulty_metres import run as run_faulty_report
 
 app = FastAPI()
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/status")
+    # Or use: return {"message": "Welcome to C3ntinel Automation API. Try /status, /run-report, or /run-faulty-report"}
 
 @app.get("/status")
 async def status():
