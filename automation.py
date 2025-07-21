@@ -48,15 +48,18 @@ def get_meter_readings(token, meter_id, start_date, end_date):
     params = {"start_date": start_date, "end_date": end_date}
     try:
         r = requests.get(url, headers=headers, params=params)
-        r.raise_for_status()
-        return r.json()
+        if r.status_code != 200:
+            print(f"❌ {meter_id} returned {r.status_code}: {r.text}")
+            return {}
+        data = r.json()
+        if not data.get("readings"):
+            print(f"⚠️ Meter {meter_id} returned no readings between {start_date} and {end_date}")
+        return data
     except requests.RequestException as e:
-        print(f"⚠️ Failed to get readings for meter {meter_id}: {e}, status: {getattr(e.response, 'status_code', 'unknown')}")
-        print(f"Request URL: {url}")
-        print(f"Request Params: {params}")
-        if r.status_code == 401:
-            print(f"⚠️ Authentication error for meter {meter_id}, skipping")
+        print(f"⚠️ Request failed for meter {meter_id}: {e}")
+        print(f"URL: {url}")
         return {}
+
 
 def get_meter_properties(token, meter_id):
     url = f"{BASE_API}/meter/{meter_id}/properties/current"
