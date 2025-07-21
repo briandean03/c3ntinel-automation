@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 import os
+
+from starlette.responses import JSONResponse
+
 from automation import run as run_report
 from detect_faulty_metres import run as run_faulty_report
 
@@ -12,8 +15,9 @@ async def root():
     # Or use: return {"message": "Welcome to C3ntinel Automation API. Try /status, /run-report, or /run-faulty-report"}
 
 @app.get("/status")
-async def status():
-    return {"status": "API is running"}
+def status():
+    return JSONResponse(content={"message": "API is running ✅"}, status_code=200)
+
 
 @app.get("/run-report")
 async def run_report_endpoint():
