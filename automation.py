@@ -141,7 +141,9 @@ def upload_to_drive(filename, drive_filename="latest_ceentiel_report.csv", folde
         print(f"⚠️ Failed to upload to Google Drive: {e}")
         raise
 
-def main(start_date="2025-06-01", end_date="2025-07-01"):
+def main(start_date="2025-06-01T00:00:00.000+00:00", end_date="2025-07-01T00:00:00.000+00:00"):
+    # rest of your code
+
     token = None
     skipped_meters = []
     try:
